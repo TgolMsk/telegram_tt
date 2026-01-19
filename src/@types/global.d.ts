@@ -7,7 +7,6 @@ declare module '*.module.scss';
 declare const APP_VERSION: string;
 declare const APP_REVISION: string;
 declare const CHANGELOG_DATETIME: number | undefined;
-
 declare namespace React {
   interface HTMLAttributes {
     // Optimization for DOM nodes prepends and inserts
@@ -203,3 +202,18 @@ interface FileSystemSyncAccessHandle {
 type FilesystemReadWriteOptions = {
   at: number;
 };
+
+
+declare global {
+  interface Window {
+    ipc?: {
+      pushMessage: (data: { 
+        chatId?: string | number; 
+        text?: string; 
+        title?: string;
+        raw?: any 
+      }) => Promise<any>;
+      isElectron?: boolean;
+    };
+  }
+}

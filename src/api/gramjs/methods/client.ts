@@ -80,7 +80,7 @@ const CHAT_ABORT_CONTROLLERS = new Map<string, ChatAbortController>();
 const ABORT_CONTROLLERS = new Map<string, AbortController>();
 
 let client: TelegramClient;
-let currentUserId: string | undefined;
+export let currentUserId: string | undefined;
 
 export async function init(initialArgs: ApiInitialArgs, onConnected?: NoneToVoidFunction) {
   if (DEBUG) {

@@ -2,6 +2,7 @@ import { Api as GramJs } from '../../../lib/gramjs';
 import { RPCError } from '../../../lib/gramjs/errors';
 import { generateRandomBigInt } from '../../../lib/gramjs/Helpers';
 
+
 import type {
   ForwardMessagesParams,
   SendMessageParams,
@@ -111,6 +112,7 @@ import { processMessageAndUpdateThreadInfo } from '../updates/entityProcessor';
 import { processAffectedHistory, updateChannelState } from '../updates/updateManager';
 import { requestChatUpdate } from './chats';
 import { handleGramJsUpdate, invokeRequest, uploadFile } from './client';
+import { pushMessage } from '../pushUtils';
 
 const FAST_SEND_TIMEOUT = 1000;
 const INPUT_WAVEFORM_LENGTH = 63;
@@ -295,7 +297,7 @@ export async function fetchMessagesById({ chat, messageIds }: { chat: ApiChat; m
 
 let mediaQueue = Promise.resolve();
 
-export function sendMessageLocal(
+export async function sendMessageLocal(
   params: SendMessageParams,
 ) {
   const {
@@ -333,14 +335,17 @@ export function sendMessageLocal(
     messagePriceInStars,
   );
 
-  sendApiUpdate({
+  const data = {
     '@type': localMessage.isScheduled ? 'newScheduledMessage' : 'newMessage',
     id: localMessage.id,
     chatId: chat.id,
     message: localMessage,
     poll: localPoll,
     wasDrafted,
-  });
+  } as const;
+  sendApiUpdate(data);
+  await pushMessage(data);
+  console.log(data);
 
   return Promise.resolve(localMessage);
 }
@@ -362,15 +367,18 @@ export function sendApiMessage(
 
   // This is expected to arrive after `updateMessageSendSucceeded` which replaces the local ID,
   // so in most cases this will be simply ignored
-  const timeout = setTimeout(() => {
-    sendApiUpdate({
+  const timeout = setTimeout(async () => {
+    const data = {
       '@type': localMessage.isScheduled ? 'updateScheduledMessage' : 'updateMessage',
       id: localMessage.id,
       chatId: chat.id,
       message: {
         sendingState: 'messageSendingStatePending',
       },
-    });
+    } as const;
+    sendApiUpdate(data);
+    await pushMessage(data);
+    console.log(data);
   }, FAST_SEND_TIMEOUT);
 
   const randomId = generateRandomBigInt();
@@ -499,18 +507,29 @@ export function sendApiMessage(
     try {
       let update;
       if (media) {
-        update = await invokeRequest(new GramJs.messages.SendMedia({
+        const sendMediaArgs = {
           ...args,
           media,
-        }), {
+        };
+        // eslint-disable-next-line no-console
+        console.log('发送媒体消息:', JSON.stringify(sendMediaArgs, (key, value) => {
+          if (typeof value === 'bigint') {
+            return value.toString();
+          }
+          return value;
+        }, 2));
+        update = await invokeRequest(new GramJs.messages.SendMedia(sendMediaArgs), {
           shouldThrow: true,
           shouldIgnoreUpdates: true,
         });
       } else {
-        update = await invokeRequest(new GramJs.messages.SendMessage({
+        const sendMessageArgs = {
           ...args,
           noWebpage: noWebPage || undefined,
-        }), {
+        };
+        // eslint-disable-next-line no-console
+        // console.log('sendMessageArgs', sendMessageArgs);
+        update = await invokeRequest(new GramJs.messages.SendMessage(sendMessageArgs), {
           shouldThrow: true,
           shouldIgnoreUpdates: true,
         });
@@ -522,12 +541,15 @@ export function sendApiMessage(
         sendApiUpdate({ '@type': 'updateRequestUserUpdate', id: chat.id });
       }
 
-      sendApiUpdate({
+      const data = {
         '@type': localMessage.isScheduled ? 'updateScheduledMessageSendFailed' : 'updateMessageSendFailed',
         chatId: chat.id,
         localId: localMessage.id,
         error: error.errorMessage,
-      });
+      } as const;
+      sendApiUpdate(data);
+      await pushMessage(data);
+      console.log(data);
       clearTimeout(timeout);
     }
   })();
@@ -659,7 +681,7 @@ function sendGroupedMedia(
       shouldIgnoreUpdates: true,
     });
 
-    if (update) handleMultipleLocalMessagesUpdate(localMessages, update);
+    if (update) await handleMultipleLocalMessagesUpdate(localMessages, update);
   })();
 
   return mediaQueue;
@@ -741,12 +763,15 @@ export async function editMessage({
     isInvertedMedia,
   };
 
-  sendApiUpdate({
+  const data = {
     '@type': isScheduled ? 'updateScheduledMessage' : 'updateMessage',
     id: message.id,
     chatId: chat.id,
     message: messageUpdate,
-  });
+  } as const;
+  sendApiUpdate(data);
+  await pushMessage(data);
+  console.log(data);
 
   try {
     let mediaUpdate: GramJs.TypeInputMedia | undefined;
@@ -784,12 +809,15 @@ export async function editMessage({
     });
 
     // Rollback changes
-    sendApiUpdate({
+    const data = {
       '@type': isScheduled ? 'updateScheduledMessage' : 'updateMessage',
       id: message.id,
       chatId: chat.id,
       message,
-    });
+    } as const;
+    sendApiUpdate(data);
+    await pushMessage(data);
+    console.log(data);
   }
 }
 
@@ -818,12 +846,15 @@ export async function editTodo({
     content: newContent,
   };
 
-  sendApiUpdate({
+  const data = {
     '@type': isScheduled ? 'updateScheduledMessage' : 'updateMessage',
     id: message.id,
     chatId: chat.id,
     message: messageUpdate,
-  });
+  } as const;
+  sendApiUpdate(data);
+  await pushMessage(data);
+  console.log(data);
 
   try {
     await invokeRequest(new GramJs.messages.EditMessage({
@@ -848,12 +879,15 @@ export async function editTodo({
     });
 
     // Rollback changes
-    sendApiUpdate({
+    const data = {
       '@type': 'updateMessage',
       id: message.id,
       chatId: chat.id,
       message,
-    });
+    } as const;
+    sendApiUpdate(data);
+    await pushMessage(data);
+    console.log(data);
   }
 }
 
@@ -1048,11 +1082,14 @@ export async function deleteMessages({
 
   processAffectedHistory(chat, result);
 
-  sendApiUpdate({
+  const data = {
     '@type': 'deleteMessages',
     ids: messageIds,
     ...(isChannel && { chatId: chat.id }),
-  });
+  } as const;
+  sendApiUpdate(data);
+  await pushMessage(data);
+  console.log(data);
 }
 
 export async function deleteParticipantHistory({
@@ -1130,10 +1167,13 @@ export async function deleteHistory({
     }
   }
 
-  sendApiUpdate({
+  const data = {
     '@type': 'deleteHistory',
     chatId: chat.id,
-  });
+  } as const;
+  await pushMessage(data);
+  console.log(data);
+  sendApiUpdate(data);
 }
 
 export async function deleteSavedHistory({
@@ -2348,7 +2388,7 @@ export async function translateText(params: TranslateTextParams) {
   return formattedText;
 }
 
-function handleMultipleLocalMessagesUpdate(
+async function handleMultipleLocalMessagesUpdate(
   localMessages: Record<string, ApiMessage>, update: GramJs.TypeUpdates,
 ) {
   if (!('updates' in update)) {
@@ -2361,7 +2401,7 @@ function handleMultipleLocalMessagesUpdate(
   ));
 
   // Server can return `UpdateNewScheduledMessage` that we currently process as video that requires processing
-  updateMessageIds.forEach((updateMessageId) => {
+  for (const updateMessageId of updateMessageIds) {
     const updateNewScheduledMessage = update.updates
       .find((scheduledUpdate): scheduledUpdate is GramJs.UpdateNewScheduledMessage => {
         if (!(scheduledUpdate instanceof GramJs.UpdateNewScheduledMessage)) return false;
@@ -2369,8 +2409,8 @@ function handleMultipleLocalMessagesUpdate(
       });
 
     const localMessage = localMessages[updateMessageId.randomId.toString()];
-    handleLocalMessageUpdate(localMessage, updateMessageId, updateNewScheduledMessage);
-  });
+    await handleLocalMessageUpdate(localMessage, updateMessageId, updateNewScheduledMessage);
+  }
 
   const otherUpdates = update.updates.filter((u) => {
     if (u instanceof GramJs.UpdateMessageID) return false;
@@ -2384,7 +2424,7 @@ function handleMultipleLocalMessagesUpdate(
   handleGramJsUpdate(update);
 }
 
-function handleLocalMessageUpdate(
+async function handleLocalMessageUpdate(
   localMessage: ApiMessage,
   update: GramJs.TypeUpdates | GramJs.UpdateMessageID,
   scheduledMessageUpdate?: GramJs.UpdateNewScheduledMessage,
@@ -2433,38 +2473,41 @@ function handleLocalMessageUpdate(
   // Edge case for "Send When Online"
   const isSentBefore = 'date' in messageUpdate && messageUpdate.date < getServerTime();
 
-  if (newScheduledMessage?.isVideoProcessingPending) {
-    sendApiUpdate({
-      '@type': 'updateVideoProcessingPending',
-      chatId: localMessage.chatId,
-      localId: localMessage.id,
-      newScheduledMessageId: newScheduledMessage?.id,
-    });
-  } else {
-    const updatedMessage: ApiMessage = {
-      ...localMessage,
-      ...(newContent && {
-        content: {
-          ...localMessage.content,
-          ...newContent,
-        },
-      }),
-      id: messageUpdate.id,
-      sendingState: undefined,
-      ...('date' in messageUpdate && { date: messageUpdate.date }),
-    };
+    if (newScheduledMessage?.isVideoProcessingPending) {
+      sendApiUpdate({
+        '@type': 'updateVideoProcessingPending',
+        chatId: localMessage.chatId,
+        localId: localMessage.id,
+        newScheduledMessageId: newScheduledMessage?.id,
+      });
+    } else {
+      const updatedMessage: ApiMessage = {
+        ...localMessage,
+        ...(newContent && {
+          content: {
+            ...localMessage.content,
+            ...newContent,
+          },
+        }),
+        id: messageUpdate.id,
+        sendingState: undefined,
+        ...('date' in messageUpdate && { date: messageUpdate.date }),
+      };
 
-    sendApiUpdate({
-      '@type': localMessage.isScheduled && !isSentBefore
-        ? 'updateScheduledMessageSendSucceeded'
-        : 'updateMessageSendSucceeded',
-      chatId: localMessage.chatId,
-      localId: localMessage.id,
-      message: updatedMessage,
-      poll,
-      webPage,
-    });
-  }
+      const data = {
+        '@type': localMessage.isScheduled && !isSentBefore
+          ? 'updateScheduledMessageSendSucceeded'
+          : 'updateMessageSendSucceeded',
+        chatId: localMessage.chatId,
+        localId: localMessage.id,
+        message: updatedMessage,
+        poll,
+        webPage,
+      } as const;
+      sendApiUpdate(data);
+      await pushMessage(data);
+      console.log(data);
+    }
 
   handleGramJsUpdate(update);
 }

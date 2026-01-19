@@ -88,13 +88,14 @@ import {
 } from '../helpers/misc';
 import localDb from '../localDb';
 import { scheduleMutedChatUpdate, scheduleMutedTopicUpdate } from '../scheduleUnmute';
+import { pushMessage } from '../pushUtils';
 import { sendApiUpdate } from './apiUpdateEmitter';
 import { processMessageAndUpdateThreadInfo } from './entityProcessor';
 
 import LocalUpdatePremiumFloodWait from './UpdatePremiumFloodWait';
 import { LocalUpdateChannelPts, LocalUpdatePts } from './UpdatePts';
 
-export function updater(update: Update) {
+export async function updater(update: Update) {
   if (update instanceof UpdateServerTimeOffset) {
     setServerTimeOffset(update.timeOffset);
 
@@ -167,7 +168,7 @@ export function updater(update: Update) {
     }
 
     if (update instanceof GramJs.UpdateNewScheduledMessage) {
-      sendApiUpdate({
+      const data = {
         '@type': 'updateScheduledMessage',
         id: message.id,
         chatId: message.chatId,
@@ -175,9 +176,15 @@ export function updater(update: Update) {
         poll,
         webPage,
         isFromNew: true,
+      } as const;
+      sendApiUpdate(data);
+      await pushMessage({
+        ...data,
+        isOutgoing: message.isOutgoing,
       });
+      console.log(data);
     } else {
-      sendApiUpdate({
+      const data = {
         '@type': 'updateMessage',
         id: message.id,
         chatId: message.chatId,
@@ -186,7 +193,13 @@ export function updater(update: Update) {
         poll,
         webPage,
         isFromNew: true,
+      } as const;
+      sendApiUpdate(data);
+      await pushMessage({
+        ...data,
+        isOutgoing: message.isOutgoing,
       });
+      console.log(data);
     }
 
     // Some updates to a Chat/Channel don't have a dedicated update class.
@@ -343,20 +356,38 @@ export function updater(update: Update) {
     // Workaround for a weird server behavior when own message is marked as incoming
     const message = omit(buildApiMessage(mtpMessage)!, ['isOutgoing']);
 
+    // Retrieve the original message from local DB to get the old text
+    // @ts-ignore
+    const localMessage = localDb.messages?.[message.id];
+    if (localMessage && localMessage.content?.text?.text && message.content.text?.text) {
+      const oldText = localMessage.content.text.text;
+      const newText = message.content.text.text;
+      const SEPARATOR = ' ||| ';
+      if (oldText !== newText) {
+        (message as any)._originalContent = oldText + SEPARATOR + newText;
+      }
+    }
+
     const poll = mtpMessage instanceof GramJs.Message && mtpMessage.media
       ? buildPollFromMedia(mtpMessage.media) : undefined;
 
     const webPage = mtpMessage instanceof GramJs.Message && mtpMessage.media
       ? buildWebPageFromMedia(mtpMessage.media) : undefined;
 
-    sendApiUpdate({
+    const data = {
       '@type': 'updateMessage',
       id: message.id,
       chatId: message.chatId,
       message,
       poll,
       webPage,
+    } as const;
+    sendApiUpdate(data);
+    await pushMessage({
+      ...data,
+      isOutgoing: (mtpMessage as GramJs.Message).out,
     });
+    console.log(data);
   } else if (update instanceof GramJs.UpdateMessageReactions) {
     sendApiUpdate({
       '@type': 'updateMessageReactions',
@@ -396,25 +427,31 @@ export function updater(update: Update) {
       extendedMedia: previewMedia,
     });
   } else if (update instanceof GramJs.UpdateDeleteMessages) {
-    sendApiUpdate({
+    const data = {
       '@type': 'deleteMessages',
       ids: update.messages,
-    });
+    } as const;
+    sendApiUpdate(data);
+    await pushMessage(data);
   } else if (update instanceof GramJs.UpdateDeleteScheduledMessages) {
-    sendApiUpdate({
+    const data = {
       '@type': 'deleteScheduledMessages',
       ids: update.messages,
       newIds: update.sentMessages,
       chatId: getApiChatIdFromMtpPeer(update.peer),
-    });
+    } as const;
+    sendApiUpdate(data);
+    await pushMessage(data);
   } else if (update instanceof GramJs.UpdateDeleteChannelMessages) {
     const chatId = buildApiPeerId(update.channelId, 'channel');
 
-    sendApiUpdate({
+    const data = {
       '@type': 'deleteMessages',
       ids: update.messages,
       chatId,
-    });
+    } as const;
+    sendApiUpdate(data);
+    await pushMessage(data);
   } else if (update instanceof GramJs.UpdateServiceNotification) {
     if (update.popup) {
       sendApiUpdate({
