@@ -886,3 +886,5 @@ function reset() {
   results = newInitials.results;
   callbacks = newInitials.callbacks;
 }
+
+(window as any).getAllNotificationsCount = getAllNotificationsCount;
