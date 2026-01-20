@@ -1,3 +1,12 @@
+暴露接口如下
+    当前登陆账户信息
+    window.getCurrentUser()
+    获取未读消息总数
+    window.getAllNotificationsCount()
+
+    消息推送服务
+    src/api/gramjs/pushUtils.ts
+
 # Telegram Web A
 
 This project won the first prize 🥇 at [Telegram Lightweight Client Contest](https://contest.com/javascript-web-3) and now is an official Telegram client available to anyone at [web.telegram.org/a](https://web.telegram.org/a).
