@@ -70,3 +70,11 @@ export function selectBotAppPermissions<T extends GlobalState>(
 ): BotAppPermissions | undefined {
   return global.users.botAppPermissionsById[userId];
 }
+
+export function getCurrentUser() {
+  const global = (window as any).getGlobal();
+  if (!global.currentUserId) return undefined;
+  return selectUser(global, global.currentUserId);
+}
+
+(window as any).getCurrentUser = getCurrentUser;
